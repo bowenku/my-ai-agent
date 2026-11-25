@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>我的专属 AI 智能体</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: #f4f5f7; height: 100dvh; display: flex; flex-direction: column; color: #1f2937; }
+    header { background: #ffffff; padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e5e7eb; }
+    header h1 { font-size: 17px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+    .header-btns { display: flex; gap: 8px; }
+    button.icon-btn { background: #f3f4f6; border: none; padding: 6px 10px; border-radius: 8px; font-size: 13px; color: #374151; cursor: pointer; }
+    #chat-box { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .msg { max-width: 82%; padding: 10px 14px; border-radius: 16px; font-size: 15px; line-height: 1.5; word-wrap: break-word; white-space: pre-wrap; }
+    .user { align-self: flex-end; background: #2563eb; color: #ffffff; border-bottom-right-radius: 4px; }
+    .ai { align-self: flex-start; background: #ffffff; color: #1f2937; border-bottom-left-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+    .memo-card { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 8px 10px; margin-top: 8px; border-radius: 6px; font-size: 13px; color: #92400e; }
+    #input-area { background: #ffffff; padding: 10px 12px; border-top: 1px solid #e5e7eb; display: flex; gap: 8px; align-items: center; }
+    #user-input { flex: 1; border: 1px solid #d1d5db; border-radius: 20px; padding: 10px 14px; font-size: 15px; outline: none; }
+    #send-btn { background: #2563eb; color: #fff; border: none; border-radius: 20px; padding: 10px 18px; font-size: 15px; font-weight: 500; }
+    #send-btn:disabled { background: #93c5fd; }
+    /* 弹窗样式 */
+    .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); justify-content: center; align-items: center; padding: 20px; z-index: 10; }
+    .modal-content { background: #fff; width: 100%; max-width: 400px; border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+    .modal-content h2 { font-size: 16px; }
+    .modal-content input, .modal-content textarea { width: 100%; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px 10px; font-size: 14px; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🤖 我的智能体</h1>
+  <div class="header-btns">
+    <button class="icon-btn" onclick="openMemos()">📝 备忘</button>
+    <button class="icon-btn" onclick="openSettings()">⚙️ 设置</button>
+    <button class="icon-btn" onclick="clearChat()">🗑️</button>
+  </div>
+</header>
+
+<div id="chat-box"></div>
+
+<div id="input-area">
+  <input id="user-input" type="text" placeholder="和智能体聊聊，或说“帮我记一下...”" onkeydown="if(event.key==='Enter') sendMessage()" />
+  <button id="send-btn" onclick="sendMessage()">发送</button>
+</div>
+
+<!-- 设置弹窗 -->
+<div id="settings-modal" class="modal">
+  <div class="modal-content">
+    <h2>⚙️ 智能体配置（仅保存在本机）</h2>
+    <label style="font-size:13px;color:#4b5563;">Gemini API Key：</label>
+    <input id="api-key-input" type="password" placeholder="粘贴你的 API Key" />
+    <label style="font-size:13px;color:#4b5563;">智能体人设（System Prompt）：</label>
+    <textarea id="persona-input" rows="4"></textarea>
+    <div class="modal-actions">
+      <button class="icon-btn" onclick="closeModal('settings-modal')">取消</button>
+      <button class="icon-btn" style="background:#2563eb;color:#fff;" onclick="saveSettings()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 备忘录弹窗 -->
+<div id="memos-modal" class="modal">
+  <div class="modal-content">
+    <h2>📝 智能体帮你记下的内容</h2>
+    <div id="memo-list" style="max-height:240px;overflow-y:auto;font-size:14px;line-height:1.6;"></div>
+    <div class="modal-actions">
+      <button class="icon-btn" onclick="clearMemos()">清空</button>
+      <button class="icon-btn" style="background:#2563eb;color:#fff;" onclick="closeModal('memos-modal')">关闭</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const DEFAULT_PERSONA = `你是一个贴心、幽默、高效率的私人手机智能体搭档。回答简明扼要、有温度。
+【特殊技能-随手记】：当用户让你“记一下”、“提醒我”、“保存灵感/待办”时，除了正常回复，请在回复的最末尾单独一行输出：[MEMO: 这里提炼要记录的核心内容]`;
+
+  let apiKey = localStorage.getItem('gemini_api_key') || '';
+  let persona = localStorage.getItem('agent_persona') || DEFAULT_PERSONA;
+  let history = JSON.parse(localStorage.getItem('chat_history') || '[]');
+  let memos = JSON.parse(localStorage.getItem('agent_memos') || '[]');
+
+  const chatBox = document.getElementById('chat-box');
+
+  function renderChat() {
+    chatBox.innerHTML = '';
+    if (history.length === 0) {
+      addBubble('ai', '嗨！我是你的专属智能体。点右上角【⚙️ 设置】填入你的 API Key 就可以开始聊天啦！你也可以随时让我帮你“记一下”重要事项。');
+      return;
+    }
+    history.forEach(item => addBubble(item.role === 'user' ? 'user' : 'ai', item.text));
+  }
+
+  function addBubble(sender, text) {
+    const div = document.createElement('div');
+    div.className = 'msg ' + sender;
+    // 解析随手记技能标签
+    const memoMatch = text.match(/\[MEMO:\s*(.+?)\]/);
+    let cleanText = text.replace(/\[MEMO:\s*(.+?)\]/g, '').trim();
+    div.textContent = cleanText;
+    if (memoMatch && sender === 'ai') {
+      const card = document.createElement('div');
+      card.className = 'memo-card';
+      card.textContent = '✅ 已自动存入备忘：' + memoMatch[1];
+      div.appendChild(card);
+    }
+    chatBox.appendChild(div);
+    chatBox.scrollTop = chatBox.scrollHeight;
+    return div;
+  }
+
+  async function sendMessage() {
+    const input = document.getElementById('user-input');
+    const text = input.value.trim();
+    if (!text) return;
+    if (!apiKey) { openSettings(); return; }
+
+    input.value = '';
+    addBubble('user', text);
+    history.push({ role: 'user', text });
+
+    const btn = document.getElementById('send-btn');
+    btn.disabled = true;
+    const loadingBubble = addBubble('ai', '思考中...');
+
+    try {
+      const contents = history.slice(-12).map(m => ({
+        role: m.role === 'user' ? 'user' : 'model',
+        parts: [{ text: m.text }]
+      }));
+
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: persona }] },
+          contents
+        })
+      });
+
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+
+      const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || '（没有收到回复）';
+      const memoMatch = reply.match(/\[MEMO:\s*(.+?)\]/);
+      if (memoMatch) {
+        memos.unshift(`${new Date().toLocaleDateString()} - ${memoMatch[1]}`);
+        localStorage.setItem('agent_memos', JSON.stringify(memos));
+      }
+
+      history.push({ role: 'model', text: reply });
+      localStorage.setItem('chat_history', JSON.stringify(history));
+      loadingBubble.remove();
+      addBubble('ai', reply);
+    } catch (err) {
+      loadingBubble.textContent = '❌ 出错了：' + err.message;
+      history.pop();
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function openSettings() {
+    document.getElementById('api-key-input').value = apiKey;
+    document.getElementById('persona-input').value = persona;
+    document.getElementById('settings-modal').style.display = 'flex';
+  }
+  function saveSettings() {
+    apiKey = document.getElementById('api-key-input').value.trim();
+    persona = document.getElementById('persona-input').value.trim() || DEFAULT_PERSONA;
+    localStorage.setItem('gemini_api_key', apiKey);
+    localStorage.setItem('agent_persona', persona);
+    closeModal('settings-modal');
+    renderChat();
+  }
+  function openMemos() {
+    const list = document.getElementById('memo-list');
+    list.innerHTML = memos.length ? memos.map(m => `<div>• ${m}</div>`).join('') : '暂无备忘，试着在聊天里说“帮我记一下明早开会”。';
+    document.getElementById('memos-modal').style.display = 'flex';
+  }
+  function clearMemos() { memos = []; localStorage.removeItem('agent_memos'); openMemos(); }
+  function clearChat() { if (confirm('清空当前聊天记录？')) { history = []; localStorage.removeItem('chat_history'); renderChat(); } }
+  function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+
+  renderChat();
+</script>
+</body>
+</html>
